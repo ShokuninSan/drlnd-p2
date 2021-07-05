@@ -1,6 +1,9 @@
-from typing import Tuple
+from typing import Tuple, Union
 
 import numpy as np
+
+
+UnityAction = Union[int, np.ndarray]
 
 
 class UnityEnvWrapper:
@@ -20,7 +23,7 @@ class UnityEnvWrapper:
 
         self.env_info = self.env.reset(train_mode=True)[self.brain_name]
         self.action_size = self.brain.vector_action_space_size
-        self.state_size = len(self.env_info.vector_observations[0])
+        self.state_size = len(self.env_info.vector_observations)
 
     def reset(self, train_mode: bool = True) -> np.ndarray:
         """
@@ -30,9 +33,9 @@ class UnityEnvWrapper:
         :return: new state.
         """
         self.env_info = self.env.reset(train_mode)[self.brain_name]
-        return self.env_info.vector_observations[0]
+        return self.env_info.vector_observations
 
-    def step(self, action: int) -> Tuple[np.array, float, bool]:
+    def step(self, action: UnityAction) -> Tuple[np.array, float, bool]:
         """
         Perform given action in the environment.
 
@@ -40,9 +43,9 @@ class UnityEnvWrapper:
         :return: (next_state, reward, done) tuple.
         """
         env_info = self.env.step(action)[self.brain_name]
-        next_state = env_info.vector_observations[0]
-        reward = env_info.rewards[0]
-        done = env_info.local_done[0]
+        next_state = env_info.vector_observations
+        reward = env_info.rewards
+        done = env_info.local_done
         return next_state, reward, done
 
     def close(self) -> None:

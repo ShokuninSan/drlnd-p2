@@ -7,7 +7,7 @@ import torch
 import torch.optim as optim
 from torch.nn import SmoothL1Loss
 
-from models import DuelingDenseQNetwork
+from models.dueling import DuelingDenseQNetwork
 from experiences import ReplayBuffer, ExperienceBatch
 
 
@@ -253,3 +253,71 @@ class DuelingDDQN:
         agent = DuelingDDQN(state_size=state_size, action_size=action_size)
         agent.qnetwork_local.load_state_dict(state_dict)
         return agent
+
+
+class DDPG:
+    """
+    A Deep Deterministic Policy Gradient agent.
+    """
+
+    def __init__(
+        self,
+        state_size: int,
+        action_size: int,
+        hidden_layer_dimensions: Tuple[int] = (512, 256),
+        buffer_size: int = 100_000,
+        batch_size: int = 64,
+        gamma: float = 0.99,
+        tau: float = 1e-3,
+        lr: float = 5e-4,
+        update_every: int = 4,
+        seed: Optional[int] = None,
+    ):
+        """
+        Creates an instance of DuelingDDQN.
+
+        :param state_size: size of state space.
+        :param action_size: size of action space.
+        :param hidden_layer_dimensions: dimensions of Q-network layer dims.
+        :param buffer_size: replay buffer size.
+        :param batch_size: mini-batch size.
+        :param gamma: discount factor.
+        :param tau: interpolation parameter for target-network weight update.
+        :param lr: learning rate.
+        :param update_every: how often to update the network.
+        :param seed: random seed.
+        """
+        self.state_size = state_size
+        self.action_size = action_size
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
+        self.gamma = gamma
+        self.tau = tau
+        self.lr = lr
+        self.update_every = update_every
+        self.seed = seed
+        if self.seed is not None:
+            random.seed(self.seed)
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        self.qnetwork_local = DuelingDenseQNetwork(
+            input_dim=self.state_size,
+            output_dim=self.action_size,
+            hidden_dims=hidden_layer_dimensions,
+            seed=self.seed,
+        ).to(self.device)
+        self.qnetwork_target = DuelingDenseQNetwork(
+            input_dim=self.state_size,
+            output_dim=self.action_size,
+            hidden_dims=hidden_layer_dimensions,
+            seed=self.seed,
+        ).to(self.device)
+
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
+        self.loss_fn = SmoothL1Loss()
+        self.memory = ReplayBuffer(
+            self.action_size, self.buffer_size, self.batch_size, self.seed
+        )
+
+        # Initialize time step (for updating every self.update_every steps)
+        self.t_step = 0
