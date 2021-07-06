@@ -6,9 +6,63 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class DuelingDenseQNetwork(nn.Module):
+class DeterministicPolicyNetwork(nn.Module):
     """
-    A fully-connected Dueling Q-Network.
+    A fully-connected Q-value network.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        hidden_dims: Tuple[int],
+        activation_fn: Callable = F.relu,
+        output_activation_fn: Callable = F.tanh,
+        seed: Optional[int] = None,
+    ):
+        """
+        Creates a deterministic policy network instance.
+
+        :param input_dim: dimension of input layer.
+        :param output_dim: dimension of output layer.
+        :param hidden_dims: dimensions of hidden layers.
+        :param activation_fn: activation function (default: ReLU).
+        :param output_activation_fn: output activation function (default: tanh).
+        :param seed: random seed.
+        """
+        super(DeterministicPolicyNetwork, self).__init__()
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        self.input_layer = nn.Linear(input_dim, hidden_dims[0])
+
+        self.hidden_layers = nn.ModuleList()
+        for i in range(len(hidden_dims) - 1):
+            self.hidden_layers.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
+        self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
+
+        self.activation_fn = activation_fn
+        self.output_activation_fn = output_activation_fn
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        """
+        Run a forward pass.
+
+        :param state: state input.
+        :return: action value output.
+        """
+        x = self.activation_fn(self.input_layer(state))
+
+        for h in self.hidden_layers:
+            x = self.activation_fn(h(x))
+
+        x = self.output_activation_fn(self.output_layer(x))
+        return x
+
+
+class FullyConnectedQNetwork(nn.Module):
+    """
+    A fully-connected Q-value network.
     """
 
     def __init__(
@@ -20,7 +74,7 @@ class DuelingDenseQNetwork(nn.Module):
         seed: Optional[int] = None,
     ):
         """
-        Creates a fully-connected Dueling Q-Network instance.
+        Creates a fully-connected Q-value network instance.
 
         :param input_dim: dimension of input layer.
         :param output_dim: dimension of output layer.
@@ -28,7 +82,7 @@ class DuelingDenseQNetwork(nn.Module):
         :param activation_fn: activation function (default: ReLU).
         :param seed: random seed.
         """
-        super(DuelingDenseQNetwork, self).__init__()
+        super(FullyConnectedQNetwork, self).__init__()
         if seed is not None:
             torch.manual_seed(seed)
 
@@ -36,14 +90,17 @@ class DuelingDenseQNetwork(nn.Module):
 
         self.hidden_layers = nn.ModuleList()
         for i in range(len(hidden_dims) - 1):
-            self.hidden_layers.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
+            _input_dim = hidden_dims[i]
+            if i == 0:
+                _input_dim += output_dim
+            h = nn.Linear(_input_dim, hidden_dims[i + 1])
+            self.hidden_layers.append(h)
 
-        self.value_output = nn.Linear(hidden_dims[-1], 1)
-        self.advantage_output = nn.Linear(hidden_dims[-1], output_dim)
+        self.output_layer = nn.Linear(hidden_dims[-1], 1)
 
         self.activation_fn = activation_fn
 
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         """
         Run a forward pass.
 
@@ -51,12 +108,10 @@ class DuelingDenseQNetwork(nn.Module):
         :return: action value output.
         """
         x = self.activation_fn(self.input_layer(state))
-        for h in self.hidden_layers:
+
+        for i, h in enumerate(self.hidden_layers):
+            if i == 0:
+                x = torch.cat([x, action], dim=1)
             x = self.activation_fn(h(x))
 
-        a = self.advantage_output(x)
-        v = self.value_output(x)
-        v = v.expand_as(a)
-        q = v + a - a.mean(1, keepdim=True).expand_as(a)
-
-        return q
+        return self.output_layer(x)
