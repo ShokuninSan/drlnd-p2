@@ -45,7 +45,7 @@ class UnityEnvWrapper:
         env_info = self.env.step(action)[self.brain_name]
         next_state = env_info.vector_observations
         reward = env_info.rewards[0]
-        done = env_info.local_done
+        done = env_info.local_done[0]
         return next_state, reward, done
 
     def close(self) -> None:

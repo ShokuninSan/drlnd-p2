@@ -23,13 +23,14 @@ class DDPG:
         self,
         state_size: int,
         action_size: int,
-        actor_hidden_layer_dimensions: Tuple[int] = (512, 256),
-        critic_hidden_layer_dimensions: Tuple[int] = (512, 256),
-        buffer_size: int = 100_000,
+        actor_hidden_layer_dimensions: Tuple[int] = (400, 300),
+        critic_hidden_layer_dimensions: Tuple[int] = (400, 300),
+        buffer_size: int = 1000_000,
         batch_size: int = 64,
         gamma: float = 0.99,
         tau: float = 1e-3,
-        lr: float = 5e-4,
+        lr_actor: float = 1e-4,
+        lr_critic: float = 1e-3,
         seed: Optional[int] = None,
     ):
         """
@@ -37,12 +38,14 @@ class DDPG:
 
         :param state_size: size of state space.
         :param action_size: size of action space.
-        :param hidden_layer_dimensions: dimensions of Q-network layer dims.
+        :param actor_hidden_layer_dimensions: hidden layer dimensions of the policy network.
+        :param critic_hidden_layer_dimensions: hidden layer dimensions of Q-network.
         :param buffer_size: replay buffer size.
         :param batch_size: mini-batch size.
         :param gamma: discount factor.
         :param tau: interpolation parameter for target-network weight update.
-        :param lr: learning rate.
+        :param lr_actor: learning rate of the policy network.
+        :param lr_critic: learning rate of the Q-network.
         :param seed: random seed.
         """
         self.state_size = state_size
@@ -51,7 +54,8 @@ class DDPG:
         self.batch_size = batch_size
         self.gamma = gamma
         self.tau = tau
-        self.lr = lr
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
         self.seed = seed
         if self.seed is not None:
             random.seed(self.seed)
@@ -63,7 +67,12 @@ class DDPG:
             hidden_dims=critic_hidden_layer_dimensions,
             seed=self.seed,
         ).to(self.device)
-        self.qnetwork_target = deepcopy(self.qnetwork_local).to(self.device)
+        self.qnetwork_target = FullyConnectedQNetwork(
+            input_dim=self.state_size,
+            output_dim=self.action_size,
+            hidden_dims=critic_hidden_layer_dimensions,
+            seed=self.seed,
+        ).to(self.device)
 
         self.policy_local = DeterministicPolicyNetwork(
             input_dim=self.state_size,
@@ -71,10 +80,15 @@ class DDPG:
             hidden_dims=actor_hidden_layer_dimensions,
             seed=self.seed,
         ).to(self.device)
-        self.policy_target = deepcopy(self.policy_local).to(self.device)
+        self.policy_target = DeterministicPolicyNetwork(
+            input_dim=self.state_size,
+            output_dim=self.action_size,
+            hidden_dims=actor_hidden_layer_dimensions,
+            seed=self.seed,
+        ).to(self.device)
 
-        self.value_optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
-        self.policy_optimizer = optim.Adam(self.policy_local.parameters(), lr=self.lr)
+        self.value_optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr_critic)
+        self.policy_optimizer = optim.Adam(self.policy_local.parameters(), lr=self.lr_actor)
         self.loss_fn = SmoothL1Loss()
         self.memory = ReplayBuffer(
             self.action_size, self.buffer_size, self.batch_size, self.seed

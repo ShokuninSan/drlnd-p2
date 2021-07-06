@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 from typing import Optional, Tuple, Callable
 
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def hidden_init(layer):
+    fan_in = layer.weight.data.size()[0]
+    lim = 1. / np.sqrt(fan_in)
+    return -lim, lim
 
 
 class DeterministicPolicyNetwork(nn.Module):
@@ -43,6 +51,14 @@ class DeterministicPolicyNetwork(nn.Module):
 
         self.activation_fn = activation_fn
         self.output_activation_fn = output_activation_fn
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.input_layer.weight.data.uniform_(*hidden_init(self.input_layer))
+        for h in self.hidden_layers:
+            h.weight.data.uniform_(*hidden_init(h))
+        self.output_layer.weight.data.uniform_(-3e-3, 3e-3)
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         """
@@ -99,6 +115,14 @@ class FullyConnectedQNetwork(nn.Module):
         self.output_layer = nn.Linear(hidden_dims[-1], 1)
 
         self.activation_fn = activation_fn
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.input_layer.weight.data.uniform_(*hidden_init(self.input_layer))
+        for h in self.hidden_layers:
+            h.weight.data.uniform_(*hidden_init(h))
+        self.output_layer.weight.data.uniform_(-3e-3, 3e-3)
 
     def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         """
