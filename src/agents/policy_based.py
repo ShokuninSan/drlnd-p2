@@ -23,8 +23,8 @@ class DDPG:
         self,
         state_size: int,
         action_size: int,
-        actor_hidden_layer_dimensions: Tuple[int] = (400, 300),
-        critic_hidden_layer_dimensions: Tuple[int] = (400, 300),
+        actor_hidden_layer_dimensions: Tuple[int] = (256, 128),
+        critic_hidden_layer_dimensions: Tuple[int] = (256, 128),
         buffer_size: int = 1000_000,
         batch_size: int = 64,
         gamma: float = 0.99,
@@ -119,7 +119,7 @@ class DDPG:
             experiences = self.memory.sample()
             self._fit(experiences)
 
-    def act(self, state: np.ndarray) -> int:
+    def act(self, state: np.ndarray, add_noise: bool = True) -> int:
         """
         Returns actions for given state as per current policy.
 
@@ -132,7 +132,9 @@ class DDPG:
         with torch.no_grad():
             action = self.policy_local(state).cpu().data.numpy()
         self.policy_local.train()
-        action += self.noise.sample()
+
+        if add_noise:
+            action += self.noise.sample()
 
         return np.clip(action, -1, 1)
 
