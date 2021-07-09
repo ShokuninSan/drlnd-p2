@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 def hidden_init(layer):
     fan_in = layer.weight.data.size()[0]
-    lim = 1. / np.sqrt(fan_in)
+    lim = 1.0 / np.sqrt(fan_in)
     return -lim, lim
 
 
@@ -47,6 +47,8 @@ class DeterministicPolicyNetwork(nn.Module):
         self.hidden_layers = nn.ModuleList()
         for i in range(len(hidden_dims) - 1):
             self.hidden_layers.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
+            if i == 0:
+                self.hidden_layers.append(nn.BatchNorm1d(hidden_dims[i + 1]))
         self.output_layer = nn.Linear(hidden_dims[-1], output_dim)
 
         self.activation_fn = activation_fn
@@ -86,7 +88,7 @@ class FullyConnectedQNetwork(nn.Module):
         input_dim: int,
         output_dim: int,
         hidden_dims: Tuple[int],
-        activation_fn: Callable = F.relu,
+        activation_fn: Callable = F.leaky_relu,
         seed: Optional[int] = None,
     ):
         """
@@ -109,8 +111,10 @@ class FullyConnectedQNetwork(nn.Module):
             _input_dim = hidden_dims[i]
             if i == 0:
                 _input_dim += output_dim
-            h = nn.Linear(_input_dim, hidden_dims[i + 1])
-            self.hidden_layers.append(h)
+                self.hidden_layers.append(nn.Linear(_input_dim, hidden_dims[i + 1]))
+                self.hidden_layers.append(nn.BatchNorm1d(hidden_dims[i + 1]))
+            else:
+                self.hidden_layers.append(nn.Linear(_input_dim, hidden_dims[i + 1]))
 
         self.output_layer = nn.Linear(hidden_dims[-1], 1)
 

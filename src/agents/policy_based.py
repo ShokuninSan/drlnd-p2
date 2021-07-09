@@ -24,12 +24,12 @@ class DDPG:
         state_size: int,
         action_size: int,
         actor_hidden_layer_dimensions: Tuple[int] = (256, 128),
-        critic_hidden_layer_dimensions: Tuple[int] = (256, 128),
+        critic_hidden_layer_dimensions: Tuple[int] = (256, 256, 128),
         buffer_size: int = 1000_000,
-        batch_size: int = 64,
+        batch_size: int = 128,
         gamma: float = 0.99,
         tau: float = 1e-3,
-        lr_actor: float = 1e-4,
+        lr_actor: float = 1e-3,
         lr_critic: float = 1e-3,
         seed: Optional[int] = None,
     ):
@@ -56,9 +56,11 @@ class DDPG:
         self.tau = tau
         self.lr_actor = lr_actor
         self.lr_critic = lr_critic
+
         self.seed = seed
         if self.seed is not None:
             random.seed(self.seed)
+
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         self.qnetwork_local = FullyConnectedQNetwork(
@@ -87,13 +89,22 @@ class DDPG:
             seed=self.seed,
         ).to(self.device)
 
-        self.value_optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr_critic)
-        self.policy_optimizer = optim.Adam(self.policy_local.parameters(), lr=self.lr_actor)
+        self.value_optimizer = optim.Adam(
+            self.qnetwork_local.parameters(), lr=self.lr_critic
+        )
+        self.policy_optimizer = optim.Adam(
+            self.policy_local.parameters(), lr=self.lr_actor
+        )
+
         self.loss_fn = SmoothL1Loss()
+
         self.memory = ReplayBuffer(
             self.action_size, self.buffer_size, self.batch_size, self.seed
         )
-        self.noise = OUNoise(action_size, self.seed)
+
+        self.noise = lambda: np.random.randn(action_size)
+        self.update_every = 4
+        self.step_count = 0
 
     def _step(
         self,
@@ -112,14 +123,17 @@ class DDPG:
         :param next_state: next state after taken action.
         :param done: indicated if the episode has finished.
         """
-        # Save experience in replay memory
         self.memory.add(state, action, reward, next_state, done)
+        self.step_count += 1
 
-        if len(self.memory) > self.batch_size:
+        if (
+            len(self.memory) > self.batch_size
+            and (self.step_count % self.update_every) == 0
+        ):
             experiences = self.memory.sample()
             self._fit(experiences)
 
-    def act(self, state: np.ndarray, add_noise: bool = True) -> int:
+    def act(self, state: np.ndarray, eps: float = 0.0) -> int:
         """
         Returns actions for given state as per current policy.
 
@@ -133,8 +147,7 @@ class DDPG:
             action = self.policy_local(state).cpu().data.numpy()
         self.policy_local.train()
 
-        if add_noise:
-            action += self.noise.sample()
+        action += self.noise() * eps
 
         return np.clip(action, -1, 1)
 
@@ -189,14 +202,14 @@ class DDPG:
             local_weight_ratio = self.tau * local_param.data
             target_param.data.copy_(target_weight_ratio + local_weight_ratio)
 
-    def reset(self):
-        self.noise.reset()
-
     def learn(
         self,
         environment,
         n_episodes: int = 5000,
         max_t: int = 1000,
+        eps_start: float = 1.0,
+        eps_end: float = 0.01,
+        eps_decay: float = 0.995,
         scores_window_length: int = 100,
         average_target_score: float = 30.0,
         model_checkpoint_path: str = "checkpoint.pth",
@@ -207,6 +220,9 @@ class DDPG:
         :param environment: environment instance to interact with.
         :param n_episodes: maximum number of training episodes.
         :param max_t:  maximum number of time steps per episode.
+        :param eps_start: starting value of epsilon, controlling random noise in action selection.
+        :param eps_end: minimum value of epsilon.
+        :param eps_decay: multiplicative factor (per episode) for decreasing epsilon.
         :param scores_window_length: length of scores window to monitor convergence.
         :param average_target_score: average target score for scores_window_length at which learning stops.
         :param model_checkpoint_path: path to store model weights to.
@@ -214,12 +230,12 @@ class DDPG:
         """
         scores = []
         scores_window = deque(maxlen=scores_window_length)
+        eps = eps_start
         for i_episode in range(1, n_episodes + 1):
             state = environment.reset(train_mode=True)
-            self.reset()
             score = 0
             for t in range(max_t):
-                action = self.act(state)
+                action = self.act(state, eps)
                 next_state, reward, done = environment.step(action)
                 self._step(state, action, reward, next_state, done)
                 state = next_state
@@ -228,6 +244,7 @@ class DDPG:
                     break
             scores_window.append(score)
             scores.append(score)
+            eps = max(eps_end, eps_decay * eps)
             average_score_window = float(np.mean(scores_window))
             self._log_progress(i_episode, average_score_window, scores_window_length)
             if np.mean(scores_window) >= average_target_score:
@@ -269,27 +286,3 @@ class DDPG:
         agent = DDPG(state_size=state_size, action_size=action_size)
         agent.policy_local.load_state_dict(state_dict)
         return agent
-
-
-class OUNoise:
-    """Ornstein-Uhlenbeck process."""
-
-    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
-        """Initialize parameters and noise process."""
-        self.mu = mu * np.ones(size)
-        self.theta = theta
-        self.sigma = sigma
-        self.seed = random.seed(seed)
-        self.reset()
-
-    def reset(self):
-        """Reset the internal state (= noise) to mean (mu)."""
-        self.state = copy(self.mu)
-
-    def sample(self):
-        """Update internal state and return it as a noise sample."""
-        x = self.state
-        dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
-        self.state = x + dx
-        return self.state
-
