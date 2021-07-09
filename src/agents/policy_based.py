@@ -2,7 +2,6 @@
 from copy import copy, deepcopy
 
 import numpy as np
-import random
 from collections import deque
 from typing import List, Optional, Tuple
 
@@ -59,30 +58,30 @@ class DDPG:
 
         self.seed = seed
         if self.seed is not None:
-            random.seed(self.seed)
+            np.random.seed(self.seed)
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        self.qnetwork_local = FullyConnectedQNetwork(
+        self.critic_local = FullyConnectedQNetwork(
             input_dim=self.state_size,
             output_dim=self.action_size,
             hidden_dims=critic_hidden_layer_dimensions,
             seed=self.seed,
         ).to(self.device)
-        self.qnetwork_target = FullyConnectedQNetwork(
+        self.critic_target = FullyConnectedQNetwork(
             input_dim=self.state_size,
             output_dim=self.action_size,
             hidden_dims=critic_hidden_layer_dimensions,
             seed=self.seed,
         ).to(self.device)
 
-        self.policy_local = DeterministicPolicyNetwork(
+        self.actor_local = DeterministicPolicyNetwork(
             input_dim=self.state_size,
             output_dim=self.action_size,
             hidden_dims=actor_hidden_layer_dimensions,
             seed=self.seed,
         ).to(self.device)
-        self.policy_target = DeterministicPolicyNetwork(
+        self.actor_target = DeterministicPolicyNetwork(
             input_dim=self.state_size,
             output_dim=self.action_size,
             hidden_dims=actor_hidden_layer_dimensions,
@@ -90,10 +89,10 @@ class DDPG:
         ).to(self.device)
 
         self.value_optimizer = optim.Adam(
-            self.qnetwork_local.parameters(), lr=self.lr_critic
+            self.critic_local.parameters(), lr=self.lr_critic
         )
         self.policy_optimizer = optim.Adam(
-            self.policy_local.parameters(), lr=self.lr_actor
+            self.actor_local.parameters(), lr=self.lr_actor
         )
 
         self.loss_fn = SmoothL1Loss()
@@ -102,9 +101,17 @@ class DDPG:
             self.action_size, self.buffer_size, self.batch_size, self.seed
         )
 
-        self.noise = lambda: np.random.randn(action_size)
         self.update_every = 4
         self.step_count = 0
+
+    def _sample_noise(self) -> np.ndarray:
+        """
+        Samples noise from a Gaussian distribution.
+
+        :return: ndarray with Gaussian distributed values of the same size as
+        the action space.
+        """
+        return np.random.randn(self.action_size)
 
     def _step(
         self,
@@ -131,27 +138,29 @@ class DDPG:
             and (self.step_count % self.update_every) == 0
         ):
             experiences = self.memory.sample()
-            self._fit(experiences)
+            self._optimize(experiences)
 
     def act(self, state: np.ndarray, eps: float = 0.0) -> int:
         """
         Returns actions for given state as per current policy.
 
         :param state: current state.
+        :param eps: noise weighting coefficient.
         :return: selected action.
         """
 
         state = torch.from_numpy(state).float().to(self.device)
-        self.policy_local.eval()
-        with torch.no_grad():
-            action = self.policy_local(state).cpu().data.numpy()
-        self.policy_local.train()
 
-        action += self.noise() * eps
+        self.actor_local.eval()
+        with torch.no_grad():
+            action = self.actor_local(state).cpu().data.numpy()
+        self.actor_local.train()
+
+        action += self._sample_noise() * eps
 
         return np.clip(action, -1, 1)
 
-    def _fit(
+    def _optimize(
         self,
         experiences: ExperienceBatch,
     ) -> None:
@@ -163,30 +172,28 @@ class DDPG:
         states, actions, rewards, next_states, dones = experiences
         batch_size = len(dones)
 
-        # get argmax (action) of target policy
-        next_action = self.policy_target(next_states)
-        # get action values from target network
-        next_q = self.qnetwork_target(next_states, next_action).detach()
+        next_action = self.actor_target(next_states)
+        next_q = self.critic_target(next_states, next_action).detach()
 
         target_q = rewards + self.gamma * next_q * (1 - dones)
-        local_q = self.qnetwork_local(states, actions)
+        local_q = self.critic_local(states, actions)
         value_loss = self.loss_fn(local_q, target_q)
 
         self.value_optimizer.zero_grad()
         value_loss.backward()
         self.value_optimizer.step()
 
-        actions = self.policy_local(states)
-        policy_loss = -self.qnetwork_local(states, actions).mean()
+        actions = self.actor_local(states)
+        policy_loss = -self.critic_local(states, actions).mean()
 
         self.policy_optimizer.zero_grad()
         policy_loss.backward()
         self.policy_optimizer.step()
 
-        self._update_target_network(self.qnetwork_local, self.qnetwork_target)
-        self._update_target_network(self.policy_local, self.policy_target)
+        self._update_target_model(self.critic_local, self.critic_target)
+        self._update_target_model(self.actor_local, self.actor_target)
 
-    def _update_target_network(self, local_model, target_model) -> None:
+    def _update_target_model(self, local_model, target_model) -> None:
         """
         Updates model parameters of target network using Polyak Averaging:
 
@@ -202,7 +209,7 @@ class DDPG:
             local_weight_ratio = self.tau * local_param.data
             target_param.data.copy_(target_weight_ratio + local_weight_ratio)
 
-    def learn(
+    def fit(
         self,
         environment,
         n_episodes: int = 5000,
@@ -212,7 +219,7 @@ class DDPG:
         eps_decay: float = 0.995,
         scores_window_length: int = 100,
         average_target_score: float = 30.0,
-        model_checkpoint_path: str = "checkpoint.pth",
+        actor_checkpoint_path: str = "actor_checkpoint.pth",
     ) -> List[float]:
         """
         Trains the agent on the given environment.
@@ -225,7 +232,7 @@ class DDPG:
         :param eps_decay: multiplicative factor (per episode) for decreasing epsilon.
         :param scores_window_length: length of scores window to monitor convergence.
         :param average_target_score: average target score for scores_window_length at which learning stops.
-        :param model_checkpoint_path: path to store model weights to.
+        :param actor_checkpoint_path: path to store actor model weights to.
         :return: list of scores.
         """
         scores = []
@@ -252,7 +259,7 @@ class DDPG:
                     f"\nEnvironment solved in {i_episode:d} episodes!\t"
                     f"Average Score: {average_score_window:.2f}"
                 )
-                torch.save(self.qnetwork_local.state_dict(), model_checkpoint_path)
+                self.dump(actor_checkpoint_path)
                 break
         return scores
 
@@ -272,17 +279,25 @@ class DDPG:
             end="\n" if i_episode % scores_window_length == 0 else "",
         )
 
+    def dump(self, actor_checkpoint_path: str) -> None:
+        """
+        Stores the weights of the actor model.
+
+        :param actor_checkpoint_path: path to store actor model weights to.
+        """
+        torch.save(self.actor_local.state_dict(), actor_checkpoint_path)
+
     @staticmethod
-    def load(model_checkpoint_path: str) -> "DDPG":
+    def load(actor_checkpoint_path: str) -> "DDPG":
         """
         Creates an agent and loads stored weights into the local model.
 
-        :param model_checkpoint_path: path to load model weights from.
+        :param actor_checkpoint_path: dir to load model weights from.
         :return: a pre-trained agent instance.
         """
-        state_dict = torch.load(model_checkpoint_path)
+        state_dict = torch.load(actor_checkpoint_path)
         state_size = list(state_dict.values())[0].shape[1]
         action_size = list(state_dict.values())[-1].shape[0]
         agent = DDPG(state_size=state_size, action_size=action_size)
-        agent.policy_local.load_state_dict(state_dict)
+        agent.actor_local.load_state_dict(state_dict)
         return agent
