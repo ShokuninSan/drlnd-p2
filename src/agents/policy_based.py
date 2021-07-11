@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from copy import copy, deepcopy
-
+import os
 import numpy as np
 from collections import deque
 from typing import List, Optional, Tuple
@@ -11,6 +11,10 @@ from torch.nn import SmoothL1Loss
 
 from models.actor_critic import DeterministicPolicyNetwork, FullyConnectedQNetwork
 from experiences import ReplayBuffer, ExperienceBatch
+
+
+ACTOR_CHECKPOINT_FILENAME = "drlnd_p2_actor.pth"
+CRITIC_CHECKPOINT_FILENAME = "drlnd_p2_critic.pth"
 
 
 class DDPG:
@@ -219,7 +223,7 @@ class DDPG:
         eps_decay: float = 0.995,
         scores_window_length: int = 100,
         average_target_score: float = 30.0,
-        actor_checkpoint_path: str = "actor_checkpoint.pth",
+        agent_checkpoint_dir: str = "",
     ) -> List[float]:
         """
         Trains the agent on the given environment.
@@ -232,7 +236,7 @@ class DDPG:
         :param eps_decay: multiplicative factor (per episode) for decreasing epsilon.
         :param scores_window_length: length of scores window to monitor convergence.
         :param average_target_score: average target score for scores_window_length at which learning stops.
-        :param actor_checkpoint_path: path to store actor model weights to.
+        :param agent_checkpoint_dir: directory to store agent's model weights to.
         :return: list of scores.
         """
         scores = []
@@ -259,7 +263,7 @@ class DDPG:
                     f"\nEnvironment solved in {i_episode:d} episodes!\t"
                     f"Average Score: {average_score_window:.2f}"
                 )
-                self.dump(actor_checkpoint_path)
+                self.save(agent_checkpoint_dir)
                 break
         return scores
 
@@ -279,22 +283,27 @@ class DDPG:
             end="\n" if i_episode % scores_window_length == 0 else "",
         )
 
-    def dump(self, actor_checkpoint_path: str) -> None:
+    def save(self, agent_checkpoint_dir: str) -> None:
         """
         Stores the weights of the actor model.
 
-        :param actor_checkpoint_path: path to store actor model weights to.
+        :param agent_checkpoint_dir: path to store agent's model weights to.
         """
+        actor_checkpoint_path = os.path.join(agent_checkpoint_dir, ACTOR_CHECKPOINT_FILENAME)
+        critic_checkpoint_path = os.path.join(agent_checkpoint_dir, CRITIC_CHECKPOINT_FILENAME)
+
         torch.save(self.actor_local.state_dict(), actor_checkpoint_path)
+        torch.save(self.critic_local.state_dict(), critic_checkpoint_path)
 
     @staticmethod
-    def load(actor_checkpoint_path: str) -> "DDPG":
+    def load(agent_checkpoint_dir: str) -> "DDPG":
         """
-        Creates an agent and loads stored weights into the local model.
+        Loads the stored actor's weights into the local model and creates a DDPG agent instance.
 
-        :param actor_checkpoint_path: dir to load model weights from.
+        :param agent_checkpoint_dir: directory to load the actor model weights from.
         :return: a pre-trained agent instance.
         """
+        actor_checkpoint_path = os.path.join(agent_checkpoint_dir, ACTOR_CHECKPOINT_FILENAME)
         state_dict = torch.load(actor_checkpoint_path)
         state_size = list(state_dict.values())[0].shape[1]
         action_size = list(state_dict.values())[-1].shape[0]
